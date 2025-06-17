@@ -85,6 +85,7 @@ class SeqData(Dataset):
     def __init__(
         self,
         root: str,
+        sem_id_dim: int,
         *args,
         is_train: bool = True,
         subsample: bool = False,
@@ -116,8 +117,17 @@ class SeqData(Dataset):
             )
 
         self._max_seq_len = max_seq_len
-        self.item_data = raw_data.data["item"]["x"]
+        # self.item_data = raw_data.data["item"]["x"]
         self.split = split
+
+        self.sem_id_dim = sem_id_dim
+        # self.item_data now stores the dimension of a semantic ID
+        self.item_data = self.sem_id_dim # This replaces the old self.item_data line
+        
+        # Also, modify the __init__ method in SeqData to store the semantic ID dimension
+        # Find this line: self.item_data = raw_data.data["item"]["x"]
+        # and add the following right after it:
+        # self.item_data = model.sem_id_dim # Or get it from config
     
     
     @property
@@ -130,33 +140,39 @@ class SeqData(Dataset):
     def __getitem__(self, idx):
         user_ids = self.sequence_data["userId"][idx]
         
-        if self.subsample:
-            seq = self.sequence_data["itemId"][idx] + self.sequence_data["itemId_fut"][idx].tolist()
-            start_idx = random.randint(0, max(0, len(seq)-3))
-            end_idx = random.randint(start_idx+3, start_idx+self.max_seq_len+1)
-            sample = seq[start_idx:end_idx]
-            
-            item_ids = torch.tensor(sample[:-1] + [-1] * (self.max_seq_len - len(sample[:-1])))
-            item_ids_fut = torch.tensor([sample[-1]])
+        # --- START OF MODIFICATIONS ---
 
-        else:
-            item_ids = self.sequence_data["itemId"][idx]
-            item_ids_fut = self.sequence_data["itemId_fut"][idx]
-        
-        assert (item_ids >= -1).all(), "Invalid movie id found"
-        x = self.item_data[item_ids, :768]
-        x[item_ids == -1] = -1
+        # We now fetch the pre-computed semantic IDs instead of item IDs
+        # The 'subsample' logic for training is more complex with pre-tokenized data,
+        # so we will disable it for simplicity and rely on the fixed-length sequences.
+        # If subsampling is critical, the logic in `my_dataset.py` would need to be enhanced.
+    
+        # Pad a sequence of semantic ID lists to a fixed total length
+        seq_sem_ids = self.sequence_data["sem_ids"][idx]
+    
+        # Flatten the list of lists and pad
+        flat_sem_ids = [sid for sublist in seq_sem_ids for sid in sublist]
+        padded_len = self.max_seq_len * self.item_data # item_data now holds sem_id_dim
+    
+        # Pad sequence to max length
+        padded_flat_sem_ids = flat_sem_ids + [-1] * (padded_len - len(flat_sem_ids))
+        item_sem_ids = torch.tensor(padded_flat_sem_ids)
+    
+        # Get the semantic IDs for the future/target item
+        item_sem_ids_fut = self.sequence_data["sem_ids_fut"][idx]
 
-        x_fut = self.item_data[item_ids_fut, :768]
-        x_fut[item_ids_fut == -1] = -1
+        # Create the sequence mask based on the original (un-flattened) sequence length
+        seq_mask = torch.zeros(self.max_seq_len, dtype=torch.bool)
+        seq_mask[:len(seq_sem_ids)] = True
 
+        # The `x` fields of SeqBatch will now carry the semantic IDs.
         return SeqBatch(
             user_ids=user_ids,
-            ids=item_ids,
-            ids_fut=item_ids_fut,
-            x=x,
-            x_fut=x_fut,
-            seq_mask=(item_ids >= 0)
+            ids=-1 * torch.ones_like(user_ids),  # Original item IDs not strictly needed by model
+            ids_fut=-1 * torch.ones_like(user_ids),
+            x=item_sem_ids,
+            x_fut=item_sem_ids_fut,
+            seq_mask=seq_mask
         )
 
 
