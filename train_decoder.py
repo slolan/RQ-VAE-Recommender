@@ -14,7 +14,9 @@ from data.utils import next_batch
 from evaluate.metrics import TopKAccumulator
 from modules.model import EncoderDecoderRetrievalModel
 from modules.scheduler.inv_sqrt import InverseSquareRootScheduler
-from modules.tokenizer.semids import SemanticIdTokenizer
+from data.my_dataset import MySemIdDataset # NEW
+from modules.tokenizer.semids import PassThroughTokenizer # MODIFIED
+# from modules.tokenizer.semids import SemanticIdTokenizer
 from modules.utils import compute_debug_metrics
 from modules.utils import parse_config
 from huggingface_hub import login
@@ -84,15 +86,11 @@ def train(
             config=params
         )
     
-    item_dataset = ItemData(
-        root=dataset_folder,
-        dataset=dataset,
-        force_process=force_dataset_process,
-        split=dataset_split
-    )
+    
     train_dataset = SeqData(
         root=dataset_folder, 
         dataset=dataset, 
+        sem_id_dim=3,
         is_train=True, 
         subsample=train_data_subsample, 
         split=dataset_split
@@ -100,6 +98,7 @@ def train(
     eval_dataset = SeqData(
         root=dataset_folder, 
         dataset=dataset, 
+        sem_id_dim=3,
         is_train=False, 
         subsample=False, 
         split=dataset_split
@@ -114,6 +113,15 @@ def train(
         train_dataloader, eval_dataloader
     )
 
+    
+    # 5. Instantiate the new PassThroughTokenizer
+    tokenizer = PassThroughTokenizer(
+        sem_id_dim=sem_id_dim, # Pass the dimension of your semantic IDs
+        codebook_size=vae_codebook_size,
+        # The rest of the VAE parameters will be ignored by the new class
+    )
+
+    # 这个是删是留等看下代码，后面都不动了
     tokenizer = SemanticIdTokenizer(
         input_dim=vae_input_dim,
         hidden_dims=vae_hidden_dims,
